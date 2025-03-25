@@ -1,8 +1,7 @@
 from mtcnn import MTCNN
 from PIL import Image
-from os import listdir
+from os import listdir, makedirs
 from os.path import isdir
-from os import makedirs
 from numpy import asarray
 
 detector = MTCNN()
@@ -31,7 +30,7 @@ def extract_face(filepath, required_size=(160, 160)):
 def flip_image(image):
     return image.transpose(Image.FLIP_LEFT_RIGHT)
 
-def load_images(directory_src, directory_dst):
+def load_faces(directory_src, directory_dst):
     for filename in listdir(directory_src):
         path = directory_src + filename
         path_dst = directory_dst + filename
@@ -52,7 +51,7 @@ def load_dir(directory_src, directory_dst):
             makedirs(path_dst)
         if not isdir(path):
             continue
-        load_images(path, path_dst)
+        load_faces(path, path_dst)
         
 if __name__ == '__main__':
     load_dir('C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\fotos\\', 'C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\faces\\')

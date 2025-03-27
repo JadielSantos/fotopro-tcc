@@ -1,10 +1,8 @@
-from mtcnn import MTCNN
 from PIL import Image
-from os import listdir, makedirs
+from os import listdir
 from os.path import isdir
 from numpy import asarray, expand_dims
 from keras_facenet import FaceNet
-import numpy as np
 import pandas as pd
 
 def load_face(filename):
@@ -64,10 +62,10 @@ def execute(directory):
     # np.savez_compressed('faces-embeddings.npz', newTrainX, trainy)
     df = pd.DataFrame(newTrainX) # create a dataframe from the embeddings
     df['label'] = trainy # add labels to the dataframe
-    df.to_csv('faces-embeddings.csv', index=False) # save embeddings to a CSV file
+    df.to_csv('faces-embeddings-val.csv', index=False) # save embeddings to a CSV file
     # X, y = shuffle(newTrainX, trainy, random_state=0) # shuffle data to avoid bias in the model training process
     
 
 if __name__ == '__main__':
-    execute('C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\faces\\')
+    execute('C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\faces_val\\')
     

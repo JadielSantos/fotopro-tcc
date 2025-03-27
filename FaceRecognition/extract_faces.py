@@ -24,7 +24,6 @@ def extract_face(filepath, required_size=(160, 160)):
     # Resize pixels to the model size
     img = Image.fromarray(face)
     img = img.resize(required_size)
-    # face_array = asarray(img)
     return img
 
 def flip_image(image):
@@ -38,8 +37,8 @@ def load_faces(directory_src, directory_dst):
         try:
             face = extract_face(path)
             flip = flip_image(face)
-            face.save(path_dst, 'JPEG', quality=100, optimize=True, progressive=True)
-            flip.save(path_dst_flip, 'JPEG', quality=100, optimize=True, progressive=True)
+            face.save(path_dst, 'JPEG', quality=95, optimize=True, progressive=True)
+            flip.save(path_dst_flip, 'JPEG', quality=95, optimize=True, progressive=True)
         except:
             print('Erro ao processar a imagem: ' + path)    
 
@@ -54,4 +53,4 @@ def load_dir(directory_src, directory_dst):
         load_faces(path, path_dst)
         
 if __name__ == '__main__':
-    load_dir('C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\fotos\\', 'C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\faces\\')
+    load_dir('C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\fotos_val\\', 'C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\faces_val\\')

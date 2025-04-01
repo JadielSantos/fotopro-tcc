@@ -11,43 +11,73 @@ from keras._tf_keras.keras import models
 from keras._tf_keras.keras import layers
 
 def load_embeddings(filename):
+    # Load the dataset
     df = pd.read_csv(filename)
+    # Drop the first column (index) and the last column (label)
     X = np.array(df.drop(columns=['label']))
+    # Convert the labels to a numpy array
     y = np.array(df.label)
+    # Shuffle the dataset
     X, y = shuffle(X, y, random_state=0)
+    
     return X, y
 
 def discretize_labels(y):
+    # Convert string labels to integers
     encoder = LabelEncoder()
+    # Fit the encoder to the labels
     encoder.fit(y)
+    # Transform the labels to integers
     y = encoder.transform(y)
+    
     return y
 
 def train_knn(trainX, trainY, valX, valY):
+    # Instantiate the KNN model
+    # n_neighbors is the number of neighbors to use for classification
     model = KNeighborsClassifier(n_neighbors=5)
+    # Fit the model to the training data
     model.fit(trainX, trainY)
+    # Predict the labels for the training and validation data
     yhat_train = model.predict(trainX)
+    # Predict the labels for the validation data
     yhay_val = model.predict(valX)
+    # Print the confusion matrix for the training data
     print_confusion_matrix('KNN', trainY, yhat_train)
+    
     return yhay_val
 
 def train_nn(trainX, trainY, valX, valY):
+    # Convert the labels to one-hot encoding
     trainY = to_categorical(trainY)
+    # Convert the validation labels to one-hot encoding
     valY = to_categorical(valY)
+    # Create the neural network model
     model = models.Sequential()
-    model.add(layers.Dense(64, activation='relu', input_shape=(trainX.shape[1],)))
+    # Add the first hidden layer with 128 neurons and ReLU activation function
+    model.add(layers.Dense(128, activation='relu', input_shape=(trainX.shape[1],)))
+    # Add a dropout layer to prevent overfitting
     model.add(layers.Dropout(0.5))
+    # Add the second hidden layer with 4 neurons and ReLU activation function
     model.add(layers.Dense(4, activation='softmax')) # 4 people in the dataset
+    # Add the output layer with 4 neurons and softmax activation function
     model.summary()
+    # Compile the model with Adam optimizer and categorical crossentropy loss function
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    # Fit the model to the training data
     model.fit(trainX, trainY, epochs=100, batch_size=8, verbose=1)
+    # Evaluate the model on the validation data
     yhat_train = model.predict(trainX)
+    # Predict the labels for the validation data
     yhat_val = model.predict(valX)
+    # Convert the predicted labels to integers
     yhat_train = np.argmax(yhat_train, axis=1)
     yhat_val = np.argmax(yhat_val, axis=1)
-    valY = np.argmax(valY, axis=1)
-    print_confusion_matrix('NN', valY, yhat_train)
-    model.save('nn_model.h5')
+    trainY = np.argmax(trainY, axis=1)
+    # Print the confusion matrix for the training data
+    print_confusion_matrix('NN', trainY, yhat_train)
+    # Save the model to a file
+    model.save('nn_model.keras')
     
     return model
 
@@ -59,8 +89,12 @@ def plot_embeddings(X, y):
     plt.show()
     
 def print_confusion_matrix(model_name, valY, yhat_val):
-    # Found input variables with inconsistent numbers of samples: [170, 174]
+    # Check if the number of samples in the validation set is equal to the number of samples in the training set
+    if len(valY) != len(yhat_val):
+        yhat_val = yhat_val[:len(valY)]
+    # Create the confusion matrix
     cm = confusion_matrix(valY, yhat_val, labels=[0, 1, 2, 3])
+    # Calculate the accuracy, sensitivity, and specificity
     total = sum(sum(cm))
     # 4 people in the dataset
     acc = (cm[0, 0] + cm[1, 1] + cm[2, 2] + cm[3, 3]) / total

@@ -4,6 +4,7 @@ from keras._tf_keras.keras.models import load_model
 import cv2
 import numpy as np
 from keras_facenet import FaceNet
+from sklearn.preprocessing import Normalizer
 
 def extract_face(image, box, required_size=(160, 160)):
     # Convert the image to RGB format
@@ -64,8 +65,13 @@ def read_frames():
             # Get the embedding for the face
             embedding = get_embedding(facenet.model, face)
             
+            # Expand dimensions to match the input shape of the model
             tensor = np.expand_dims(embedding, axis=0)
-
+            
+            # Normalize the tensor
+            norm = Normalizer(norm='l2')
+            tensor = norm.transform(tensor)
+            
             # To categorical encoding
             tensor = np.array(tensor)
             tensor = np.reshape(tensor, (1, 512))
@@ -75,6 +81,10 @@ def read_frames():
             
             # Get the probability of the prediction and the predicted class
             prob = np.max(prediction)
+            
+            if prob < 0.9:
+                continue
+            
             prediction = np.argmax(prediction)
             
             print(f'Probability: {prob}')

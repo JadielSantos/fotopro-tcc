@@ -2,6 +2,7 @@
 /faces_val
 /fotos
 /fotos_val
+/album*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

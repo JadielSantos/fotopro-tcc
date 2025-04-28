@@ -1,0 +1,2 @@
+timestamp,val_loss,auc,best_threshold,accuracy,min_faces_per_person
+2025-04-16 12:11:25,0.5396875143051147,0.5877885317750183,0.81851137,0.5790540540540541,14

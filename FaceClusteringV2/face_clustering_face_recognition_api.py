@@ -1,22 +1,27 @@
 import os
 import numpy as np
 import face_recognition
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 from collections import defaultdict
+from sklearn.neighbors import BallTree
+from tqdm import tqdm
+from datetime import datetime
 
-# Caminhos de entrada e saída
-IMAGES_PATH = "C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album1\\"
-OUTPUT_DIR = "C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album1_grouped_face_recognition\\"
+# Configurações
+IMAGES_PATH = "C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album_test\\"
+OUTPUT_DIR = f"C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album_grouped-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}\\"
+TOLERANCE = 0.55  # Similar ao tolerance do face_recognition
 
-# Reduz a resolução das imagens pela metade (em megapixels)
+# Reduz resolução
+
 def resize_image_half(image_path):
     image = Image.open(image_path).convert("RGB")
-    image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
     width, height = image.size
     image = image.resize((width // 2, height // 2))
     return image
 
-# Extrai rostos usando face_recognition (em vez do DeepFace)
+# Extrai faces e encodings
+
 def extract_faces_with_encodings(folder_path):
     all_faces = []
     for filename in os.listdir(folder_path):
@@ -28,7 +33,7 @@ def extract_faces_with_encodings(folder_path):
             face_locations = face_recognition.face_locations(np_image)
             encodings = face_recognition.face_encodings(np_image, face_locations)
 
-            for i, (bbox, encoding) in enumerate(zip(face_locations, encodings)):
+            for bbox, encoding in zip(face_locations, encodings):
                 top, right, bottom, left = bbox
                 face_crop = image.crop((left, top, right, bottom)).resize((94, 94))
 
@@ -41,25 +46,36 @@ def extract_faces_with_encodings(folder_path):
                 })
     return all_faces
 
-# Agrupa usando face_recognition.compare_faces
-def cluster_faces_by_encoding(faces, tolerance=0.5):
+# Agrupa com BallTree
+
+def cluster_faces_with_balltree(faces, tolerance=TOLERANCE):
+    if len(faces) == 0:
+        return []
+
+    encodings = np.array([face["encoding"] for face in faces])
+    tree = BallTree(encodings, metric='euclidean')
+
+    visited = [False] * len(faces)
     groups = []
-    for i, face in enumerate(faces):
-        print(f"Analisando face {i}")
-        added = False
-        for j, group in enumerate(groups):
-            ref_encoding = group[0]["encoding"]
-            match = face_recognition.compare_faces([ref_encoding], face["encoding"], tolerance=tolerance)[0]
-            print(f"  Comparando com grupo {j} -> Match: {match}")
-            if match:
-                group.append(face)
-                added = True
-                break
-        if not added:
-            groups.append([face])
+
+    for i in tqdm(range(len(faces)), desc="Agrupando rostos"):
+        if visited[i]:
+            continue
+
+        ind = tree.query_radius(encodings[i].reshape(1, -1), r=tolerance)[0]
+        group = []
+
+        for idx in ind:
+            if not visited[idx]:
+                group.append(faces[idx])
+                visited[idx] = True
+
+        groups.append(group)
+
     return groups
 
-# Função para salvar os rostos agrupados em pastas
+# Salva grupos de rostos
+
 def save_face_groups(grouped_faces, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     for idx, faces in enumerate(grouped_faces):
@@ -85,6 +101,8 @@ def save_face_groups(grouped_faces, output_dir):
             image_name = os.path.basename(img_path)
             image.save(os.path.join(caixas_dir, image_name))
 
+# Programa principal
+
 def main():
     print("Extraindo rostos com face_recognition...")
     faces = extract_faces_with_encodings(IMAGES_PATH)
@@ -93,8 +111,8 @@ def main():
         print("Poucos rostos detectados. Encerrando.")
         return
 
-    print("Agrupando rostos...")
-    grouped_faces = cluster_faces_by_encoding(faces, tolerance=0.45)
+    print("Agrupando rostos com BallTree...")
+    grouped_faces = cluster_faces_with_balltree(faces, tolerance=TOLERANCE)
 
     print(f"{len(grouped_faces)} grupos identificados.")
     for i, group in enumerate(grouped_faces):

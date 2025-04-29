@@ -1,34 +1,67 @@
 import os
 import numpy as np
 import keras._tf_keras.keras.backend as K
-import numpy as np
 import keras._tf_keras.keras.config as tfconfig
 from PIL import Image, ImageDraw
 from deepface import DeepFace
 from collections import defaultdict
 from keras._tf_keras.keras import models
 from datetime import datetime
-from PIL import ImageFilter
+import csv
 
-# Caminhos de entrada e saída
-IMAGES_PATH = "C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album1\\"
-OUTPUT_DIR = f"C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album1_grouped-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}\\"
+# === Configurações Gerais ===
+IMAGES_PATH = "C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album\\"
+OUTPUT_DIR = f"C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album_grouped-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}\\"
 MODEL_PATH = "siamese_model_finetuned_2025-04-25_01-20-50_auc977.keras"
-BEST_THRESHOLD = 0.1682508 # Limiar de similaridade para agrupamento (ajustar conforme necessário)
-MARGIN = 0.75
+BEST_THRESHOLD = 0.1682508
+IMG_SIZE = (94, 94)
+SAFETY_MARGIN = 0.02
+WORKING_THRESHOLD = BEST_THRESHOLD + SAFETY_MARGIN
 
-# Configurações do TensorFlow para evitar problemas de compatibilidade
+# Habilita unsafe deserialization
 tfconfig.enable_unsafe_deserialization()
 
-# Reduz a resolução das imagens pela metade (em megapixels)
+def save_summary_csv(output_dir, grouped_faces):
+    csv_path = os.path.join(output_dir, f"grouped_faces_summary.csv")
+    with open(csv_path, mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Grupo", "Imagem Original", "Bounding Box"])
+        for idx, group in enumerate(grouped_faces):
+            for face in group:
+                writer.writerow([f"Grupo_{idx+1}", face['original_path'], face['bbox']])
+
+def contrastive_loss(y_true, y_pred):
+    margin = 0.75
+    return K.mean(y_true * K.square(y_pred) + (1 - y_true) * K.square(K.maximum(margin - y_pred, 0)))
+
+def predict_similarity(model, face1, face2):
+    """
+    Recebe duas imagens de faces (pré-processadas) e retorna a similaridade prevista pela rede siamesa.
+
+    Args:
+        model: Modelo siamesa carregado.
+        face1: numpy array com shape (94, 94, 3), já normalizado (float32 / 255.0).
+        face2: numpy array com shape (94, 94, 3), já normalizado (float32 / 255.0).
+
+    Returns:
+        Similaridade (float) - quanto menor, mais diferentes; quanto maior, mais similares.
+    """
+    # Expande a dimensão para batch de tamanho 1
+    face1 = np.expand_dims(face1, axis=0)
+    face2 = np.expand_dims(face2, axis=0)
+    
+    # Faz a predição
+    pred = model.predict([face1, face2], verbose=0)
+    
+    return pred[0][0]
+
+
 def resize_image_half(image_path):
     image = Image.open(image_path).convert("RGB")
-    image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
     width, height = image.size
-    image = image.resize((width // 2, height // 2))
+    image = image.resize((width // 2, height // 2), Image.BICUBIC)
     return image
 
-# Extrai faces com DeepFace (ArcFace)
 def extract_faces_from_folder(folder_path, detector_backend="mtcnn"):
     all_faces = []
     for filename in os.listdir(folder_path):
@@ -38,8 +71,8 @@ def extract_faces_from_folder(folder_path, detector_backend="mtcnn"):
             np_image = np.array(image)
             faces = DeepFace.extract_faces(img_path=np_image, detector_backend=detector_backend, enforce_detection=False)
 
-            for i, face in enumerate(faces):
-                face_crop = Image.fromarray((face["face"] * 255).astype(np.uint8)).resize((94, 94))
+            for face in faces:
+                face_crop = Image.fromarray((face["face"] * 255).astype(np.uint8)).resize(IMG_SIZE, Image.BICUBIC)
                 all_faces.append({
                     "face_img": face_crop,
                     "embedding_img": np.array(face_crop).astype("float32") / 255.0,
@@ -49,27 +82,21 @@ def extract_faces_from_folder(folder_path, detector_backend="mtcnn"):
                 })
     return all_faces
 
-# Gera embeddings com DeepFace (ArcFace)
-def generate_embeddings(faces, model_name="ArcFace"):
-    for face in faces:
-        rep = DeepFace.represent(img_path=face["embedding_img"], model_name=model_name, enforce_detection=False)[0]["embedding"]
-        face["embedding_img"] = np.array(rep).astype("float32") / 255.0
-    return True
-
-# Agrupa usando a rede siamesa
-def cluster_faces_siamese(model, faces):
+def cluster_faces_siamese(model, faces, threshold):
+    if not faces or len(faces) == 0 or model is None or threshold <= 0:
+        print("Nenhum rosto encontrado ou modelo não carregado.")
+        return []
+    
     groups = []
     for i, face in enumerate(faces):
         print(f"Analisando face {i}")
         added = False
         for j, group in enumerate(groups):
-            ref_face = group[0]["embedding_img"]
-            pred = model.predict([
-                np.expand_dims(face["embedding_img"], axis=0),
-                np.expand_dims(ref_face, axis=0)
-            ], verbose=0)
-            print(f"  Comparando com grupo {j} -> Similaridade (rede): {pred[0][0]:.4f}")
-            if pred[0][0] > BEST_THRESHOLD:
+            similarities = []
+            for ref_face in group:
+                similarity = predict_similarity(model, face["embedding_img"], ref_face["embedding_img"])
+                similarities.append(similarity)
+            if np.mean(similarities) > threshold:
                 group.append(face)
                 added = True
                 break
@@ -77,8 +104,7 @@ def cluster_faces_siamese(model, faces):
             groups.append([face])
     return groups
 
-# Função para salvar os rostos agrupados em pastas
-def save_face_groups(grouped_faces, output_dir):
+def save_face_groups(output_dir, grouped_faces):
     os.makedirs(output_dir, exist_ok=True)
     for idx, faces in enumerate(grouped_faces):
         group_name = f"Grupo_{idx+1}"
@@ -101,35 +127,34 @@ def save_face_groups(grouped_faces, output_dir):
                 draw.text((box[0], box[1]-10), f"Face {idx}", fill="red")
             image_name = os.path.basename(img_path)
             image.save(os.path.join(caixas_dir, image_name))
-    
-def contrastive_loss(y_true, y_pred):
-    margin = MARGIN
-    return K.mean(y_true * K.square(y_pred) + (1 - y_true) * K.square(K.maximum(margin - y_pred, 0)))
 
 def main():
-    # Carrega o modelo de rede siamesa
-    if os.path.exists(MODEL_PATH):
-        print("Carregando modelo siamesa...")
-        model = models.load_model(MODEL_PATH, custom_objects={"contrastive_loss": contrastive_loss})
-    else:
-        print("Modelo não encontrado.")
+    if not os.path.exists(MODEL_PATH):
+        print("Modelo nao encontrado.")
         return
-    
-    print("Extraindo rostos das imagens...")
+
+    print("Carregando modelo siamesa...")
+    model = models.load_model(MODEL_PATH, custom_objects={"contrastive_loss": contrastive_loss})
+
+    print("Extraindo rostos...")
     faces = extract_faces_from_folder(IMAGES_PATH)
 
-    print("Gerando embeddings com ArcFace...")
-    generate_embeddings(faces)
-
-    print("Agrupando com rede siamesa...")
-    groups = cluster_faces_siamese(model, faces)
+    print("Agrupando rostos...")
+    groups = cluster_faces_siamese(model, faces, WORKING_THRESHOLD)
 
     print(f"{len(groups)} grupos identificados.")
     for i, group in enumerate(groups):
         print(f"Grupo {i+1}: {len(group)} rostos")
-
-    print("Salvando resultados...")
-    save_face_groups(groups, OUTPUT_DIR)
+        
+    if len(groups) <= 1:
+        print("Nenhum grupo encontrado ou apenas um grupo encontrado.")
+        return
+    
+    print("Salvando agrupamentos...")
+    save_face_groups(OUTPUT_DIR, groups)
+    
+    print("Salvando resumo em CSV...")
+    save_summary_csv(OUTPUT_DIR, groups)
     
     print("Processo concluído.")
 

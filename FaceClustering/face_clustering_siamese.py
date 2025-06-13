@@ -10,17 +10,20 @@ from keras._tf_keras.keras import layers, Model
 from keras._tf_keras.keras.regularizers import l2
 from datetime import datetime
 from sklearn.cluster import DBSCAN
+from sklearn.preprocessing import normalize
+import seaborn as sns
+import matplotlib.pyplot as plt
 import csv
 
 # === Configurações Gerais ===
 IMAGES_PATH = "C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album_test\\"
 OUTPUT_DIR = f"C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc\\album_grouped-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}\\"
-MODEL_PATH = "siamese_model_finetuned_2025-04-25_01-20-50_auc977.keras"
-WEIGHTS_PATH = "siamese_finetuned_2025-04-25_01-20-50_auc977.weights.h5"
-BEST_THRESHOLD = 0.1682508
+MODEL_PATH = "siamese_model_finetuned_2025-04-30_15-43-26_auc810_celeba.keras"
+WEIGHTS_PATH = "checkpoint_2025-05-13_01-27-23.weights.h5"
+BEST_THRESHOLD = 0.3
 IMG_SIZE = (94, 94)
 IMG_SHAPE = (94, 94, 3)
-SAFETY_MARGIN = 0.08
+SAFETY_MARGIN = 0
 WORKING_THRESHOLD = BEST_THRESHOLD + SAFETY_MARGIN
 
 # Habilita unsafe deserialization
@@ -58,6 +61,56 @@ def predict_similarity(model, face1, face2):
     pred = model.predict([face1, face2], verbose=0)
     
     return pred[0][0]
+
+def build_shared_network_hard(input_shape):
+    inputs = layers.Input(shape=input_shape)
+
+    # Convoluções com BatchNorm
+    x = layers.Conv2D(64, (3, 3), strides=2, activation='relu', padding='same', kernel_regularizer=l2(1e-4))(inputs)
+    x = layers.BatchNormalization()(x)
+    x = layers.Conv2D(128, (3, 3), strides=2, activation='relu', padding='same', kernel_regularizer=l2(1e-4))(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Conv2D(256, (3, 3), strides=2, activation='relu', padding='same', kernel_regularizer=l2(1e-4))(x)
+    x = layers.BatchNormalization()(x)
+
+    # GAP + GMP
+    gap = layers.GlobalAveragePooling2D()(x)
+    gmp = layers.GlobalMaxPooling2D()(x)
+    x = layers.concatenate([gap, gmp])
+
+    # Dense 256 com LayerNorm
+    x = layers.Dense(256, kernel_regularizer=l2(1e-2))(x)
+    x = layers.LayerNormalization()(x)
+    x = layers.LeakyReLU()(x)
+    x = layers.Dropout(0.3)(x)
+
+    # Dense 128 com LayerNorm
+    x = layers.Dense(128, kernel_regularizer=l2(1e-3))(x)
+    x = layers.LayerNormalization()(x)
+    x = layers.LeakyReLU()(x)
+    x = layers.Dropout(0.3)(x)
+
+    return Model(inputs, x, name="shared_cnn")
+
+def build_siamese_model_hard(input_shape=(94, 94, 3)):
+    # Define o modelo siamesa com duas entradas e uma saída de distância.
+    
+    # Args:
+    #     input_shape (tuple): Forma de entrada da imagem.
+    
+    # Returns:
+    #     model (tf.keras.Model): Modelo siamesa.
+    
+    input_a = layers.Input(shape=input_shape)
+    input_b = layers.Input(shape=input_shape)
+
+    shared_cnn = build_shared_network_hard(input_shape)
+    encoded_a = shared_cnn(input_a)
+    encoded_b = shared_cnn(input_b)
+
+    distance = layers.Lambda(cosine_distance, output_shape=(1,))([encoded_a, encoded_b])
+    model = Model(inputs=[input_a, input_b], outputs=distance, name="siamese_network")
+    return model
 
 def build_shared_network(input_shape):
     inputs = layers.Input(shape=input_shape)
@@ -122,9 +175,11 @@ def extract_faces_from_folder(folder_path, detector_backend="mtcnn"):
 
             for face in faces:
                 face_crop = Image.fromarray((face["face"] * 255).astype(np.uint8)).resize(IMG_SIZE, Image.BICUBIC)
+                img = np.array(face_crop).astype("float32") / 255.0
+                assert img.max() <= 1.0 and img.min() >= 0.0, "Imagem fora da faixa [0, 1]"
                 all_faces.append({
                     "face_img": face_crop,
-                    "embedding_img": np.array(face_crop).astype("float32") / 255.0,
+                    "embedding_img": img,
                     "bbox": face["facial_area"],
                     "original_path": full_path,
                     "original_name": os.path.splitext(os.path.basename(full_path))[0]
@@ -198,7 +253,7 @@ def save_face_groups(output_dir, grouped_faces):
             image_name = os.path.basename(img_path)
             image.save(os.path.join(caixas_dir, image_name))
 
-def cluster_faces_siamese_dbscan(model, faces, threshold):
+def cluster_faces_siamese_dbscan(model, faces, threshold, eps=0.5):
     if not faces or len(faces) == 0 or model is None or threshold <= 0:
         print("Nenhum rosto encontrado ou modelo não carregado.")
         return []
@@ -218,7 +273,6 @@ def cluster_faces_siamese_dbscan(model, faces, threshold):
     print("[INFO] Aplicando DBSCAN...")
     # eps = máximo de distância para considerar "mesmo cluster"
     # min_samples = mínimo de vizinhos para formar um cluster
-    eps = 0.1
     db = DBSCAN(eps=eps, min_samples=2, metric="precomputed")
     labels = db.fit_predict(distance_matrix)
 
@@ -229,8 +283,21 @@ def cluster_faces_siamese_dbscan(model, faces, threshold):
             groups[f"outlier_{idx}"].append(faces[idx])
         else:
             groups[f"group_{label}"].append(faces[idx])
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    plot_distance_matrix(distance_matrix, f"distance_matrix_{timestamp}.png")
 
     return list(groups.values())
+
+def plot_distance_matrix(matrix, output_path="distance_matrix_heatmap.png"):
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(matrix, cmap="viridis", xticklabels=False, yticklabels=False)
+    plt.title("Matriz de Distâncias entre Rostos")
+    plt.xlabel("Índice de Face")
+    plt.ylabel("Índice de Face")
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
 
 def load_shared_cnn(weights_path, input_shape=(94, 94, 3)):
     from keras._tf_keras.keras import layers, Model
@@ -282,6 +349,7 @@ def generate_embeddings_sharedcnn(model, faces):
         img = np.expand_dims(face["embedding_img"], axis=0)  # (1, 94, 94, 3)
         emb = model.predict(img, verbose=0)[0]  # Saída (256,)
         embeddings.append(emb)
+    embeddings = normalize(embeddings)  # L2 normalization
     return embeddings
 
 def cluster_faces_embeddings_dbscan(embeddings, faces, eps=0.5, min_samples=2):
@@ -317,20 +385,16 @@ def cluster_faces_embeddings_dbscan(embeddings, faces, eps=0.5, min_samples=2):
     return list(groups.values())
 
 def main_deepface():
-    if not os.path.exists(MODEL_PATH):
-        print("Modelo nao encontrado.")
-        return
-
     print("Carregando modelo siamesa...")
     print("Carregando arquitetura e pesos...")
-    model = build_siamese_model(input_shape=IMG_SHAPE)
+    model = build_siamese_model_hard(input_shape=IMG_SHAPE)
     model.load_weights(WEIGHTS_PATH)
 
     print("Extraindo rostos...")
     faces = extract_faces_from_folder(IMAGES_PATH)
 
     print("Agrupando rostos...")
-    groups = cluster_faces_siamese_dbscan(model, faces, WORKING_THRESHOLD)
+    groups = cluster_faces_siamese_dbscan(model, faces, WORKING_THRESHOLD, eps=0.05)
     # groups = cluster_faces_siamese(model, faces, WORKING_THRESHOLD)
 
     print(f"{len(groups)} grupos identificados.")
@@ -360,7 +424,7 @@ def main():
     embeddings = generate_embeddings_sharedcnn(shared_cnn, faces)
 
     print("Agrupando rostos...")
-    groups = cluster_faces_embeddings_dbscan(embeddings, faces, eps=0.15, min_samples=2)
+    groups = cluster_faces_embeddings_dbscan(embeddings, faces, eps=0.07, min_samples=2)
     
     print(f"{len(groups)} grupos identificados.")
     for i, group in enumerate(groups):
@@ -379,4 +443,4 @@ def main():
     print("Processo concluído.")
 
 if __name__ == "__main__":
-    main()
+    main_deepface()

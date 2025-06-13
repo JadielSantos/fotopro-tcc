@@ -47,7 +47,6 @@ def extract_faces_with_encodings(folder_path):
     return all_faces
 
 # Agrupa com BallTree
-
 def cluster_faces_with_balltree(faces, tolerance=TOLERANCE):
     if len(faces) == 0:
         return []

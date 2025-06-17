@@ -27,6 +27,7 @@ def extract_encoding_from_selfie(selfie_path):
     if len(face_locations) == 0:
         raise Exception("Nenhum rosto encontrado na selfie.")
     
+    # Extrai os embeddings dos rostos encontrados na selfie
     encodings = face_recognition.face_encodings(np_image, face_locations, model=MODEL_SIZE)
     if len(encodings) == 0:
         raise Exception("Nenhum embedding de rosto encontrada na selfie.")

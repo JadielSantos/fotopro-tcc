@@ -139,11 +139,13 @@ app = Flask(__name__)
 def filter_faces():
     data = request.get_json()
     selfie_path = data.get("selfiePath")
+    event_id = data.get("eventId")
     
     if not selfie_path:
         return jsonify({ "error": "Parâmetro 'selfiePath' é obrigatório." }), 400
     
-    photos_folder = selfie_path.split("selfie")[0] + "\\photos"
+    # photos_folder = selfie_path.split("selfie")[0] + "\\photos"
+    photos_folder = "C:\\Users\\JadieldosSantos\\work\\furb\\fotopro-tcc-app\\fotopro-webapp\\public\\storage\\event_photos\\" + event_id
     
     if not os.path.exists(selfie_path):
         return jsonify({ "error": f"Arquivo de selfie não encontrado em {selfie_path}" }), 400
